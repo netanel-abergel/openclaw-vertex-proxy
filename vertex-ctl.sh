@@ -10,14 +10,15 @@ SESSIONS="/opt/ocana/openclaw/agents/main/sessions/sessions.json"
 GCP_CREDS="/opt/ocana/openclaw/gcp-adc.json"
 
 enable_proxy() {
-  jq '.models.providers.anthropic.baseUrl = "http://localhost:4100" | .models.providers.anthropic.apiKey = "vertex-proxy"' "$OC_CONF" > /tmp/_oc.json && cp /tmp/_oc.json "$OC_CONF"
-  jq '.providers.anthropic.baseUrl = "http://localhost:4100" | .providers.anthropic.apiKey = "vertex-proxy"' "$AGENT_MODELS" > /tmp/_am.json && cp /tmp/_am.json "$AGENT_MODELS"
+  # Update baseUrl and apiKey without wiping existing fields (like models array)
+  jq '(.models.providers.anthropic.baseUrl) = "http://localhost:4100" | (.models.providers.anthropic.apiKey) = "vertex-proxy"' "$OC_CONF" > /tmp/_oc.json && cp /tmp/_oc.json "$OC_CONF"
+  jq '(.providers.anthropic.baseUrl) = "http://localhost:4100" | (.providers.anthropic.apiKey) = "vertex-proxy"' "$AGENT_MODELS" > /tmp/_am.json && cp /tmp/_am.json "$AGENT_MODELS"
   jq '.["anthropic:manual"] = {"provider":"anthropic","token":"vertex-proxy","profileId":"anthropic:manual"}' "$AUTH_PROFILES" > /tmp/_ap.json && cp /tmp/_ap.json "$AUTH_PROFILES"
 }
 
 disable_proxy() {
-  jq '.models.providers.anthropic.baseUrl = "https://api.anthropic.com" | .models.providers.anthropic.apiKey = ""' "$OC_CONF" > /tmp/_oc.json && cp /tmp/_oc.json "$OC_CONF"
-  jq '.providers.anthropic.baseUrl = "https://api.anthropic.com" | .providers.anthropic.apiKey = ""' "$AGENT_MODELS" > /tmp/_am.json && cp /tmp/_am.json "$AGENT_MODELS"
+  jq '(.models.providers.anthropic.baseUrl) = "https://api.anthropic.com" | (.models.providers.anthropic.apiKey) = ""' "$OC_CONF" > /tmp/_oc.json && cp /tmp/_oc.json "$OC_CONF"
+  jq '(.providers.anthropic.baseUrl) = "https://api.anthropic.com" | (.providers.anthropic.apiKey) = ""' "$AGENT_MODELS" > /tmp/_am.json && cp /tmp/_am.json "$AGENT_MODELS"
   jq 'del(.["anthropic:manual"])' "$AUTH_PROFILES" > /tmp/_ap.json && cp /tmp/_ap.json "$AUTH_PROFILES"
 }
 
@@ -82,8 +83,8 @@ case "$1" in
     # Update sessions
     sed -i "s|${OLD_MODEL}|${NEW_MODEL}|g" "$SESSIONS"
     COUNT=$(grep -c "$NEW_MODEL" "$SESSIONS")
-    # Update openclaw default
-    openclaw models set "anthropic-vertex/${NEW_MODEL}" 2>&1 | tail -1
+    # Update openclaw default — use anthropic/ provider (proxy handles vertex translation)
+    openclaw models set "anthropic/${NEW_MODEL}" 2>&1 | tail -1
     echo "✓ Model switched: ${OLD_MODEL} → ${NEW_MODEL} (${COUNT} refs)"
     echo "  Restart gateway to apply"
     ;;
