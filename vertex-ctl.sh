@@ -1,6 +1,6 @@
 #!/bin/bash
 # Vertex AI Proxy Controller for OpenClaw
-# Usage: vertex-ctl {start|stop|status|model <name>}
+# Usage: vertex-ctl {start|stop|status|model|test}
 
 PROXY_DIR="/opt/ocana/bifrost"
 OC_CONF="/opt/ocana/openclaw/openclaw.json"
@@ -8,6 +8,17 @@ AGENT_MODELS="/opt/ocana/openclaw/agents/main/agent/models.json"
 AUTH_PROFILES="/opt/ocana/openclaw/agents/main/agent/auth-profiles.json"
 SESSIONS="/opt/ocana/openclaw/agents/main/sessions/sessions.json"
 GCP_CREDS="/opt/ocana/openclaw/gcp-adc.json"
+
+kill_proxy() {
+  pkill -f "bifrost/run.sh" 2>/dev/null
+  pkill -f "bifrost/proxy.js" 2>/dev/null
+  # Also kill by port in case process names don't match
+  if command -v fuser &>/dev/null; then
+    fuser -k 4100/tcp 2>/dev/null
+  else
+    lsof -ti :4100 | xargs kill 2>/dev/null
+  fi
+}
 
 enable_proxy() {
   # Update baseUrl and apiKey without wiping existing fields (like models array)
@@ -24,13 +35,23 @@ disable_proxy() {
 
 case "$1" in
   start)
+    # Preflight: check GCP credentials exist
+    if [ ! -f "$GCP_CREDS" ]; then
+      echo "✗ GCP credentials not found at $GCP_CREDS"
+      echo "  Copy your application_default_credentials.json there first."
+      echo "  Generate with: gcloud auth application-default login"
+      exit 1
+    fi
+
     echo "Starting Vertex AI proxy..."
-    pkill -f "bifrost/run.sh" 2>/dev/null
-    pkill -f "bifrost/proxy.js" 2>/dev/null
+    kill_proxy
     sleep 1
+
+    # Start proxy in background
     nohup "$PROXY_DIR/run.sh" >> "$PROXY_DIR/proxy.log" 2>&1 &
-    sleep 3
-    if curl -s http://localhost:4100/ | grep -q vertex; then
+    sleep 4
+
+    if curl -s -m 3 http://localhost:4100/ | grep -q vertex; then
       enable_proxy
       echo "✓ Proxy running on port 4100"
       echo "✓ OpenClaw pointed to Vertex AI"
@@ -41,8 +62,7 @@ case "$1" in
     ;;
   stop)
     echo "Stopping Vertex AI proxy..."
-    pkill -f "bifrost/run.sh" 2>/dev/null
-    pkill -f "bifrost/proxy.js" 2>/dev/null
+    kill_proxy
     disable_proxy
     echo "✓ Proxy stopped"
     echo "✓ OpenClaw reverted to default provider"
@@ -54,11 +74,36 @@ case "$1" in
     else
       echo "✗ Proxy: DOWN"
     fi
-    CURRENT_MODEL=$(jq -r '.session.defaultModel // "unknown"' "$OC_CONF" 2>/dev/null)
     SESSION_MODEL=$(grep -oP '"model"\s*:\s*"\K[^"]+' "$SESSIONS" 2>/dev/null | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
     CURRENT_URL=$(jq -r '.models.providers.anthropic.baseUrl' "$OC_CONF" 2>/dev/null)
     echo "  Model: ${SESSION_MODEL:-unknown}"
     echo "  Route: ${CURRENT_URL}"
+    # Check GCP credentials
+    if [ ! -f "$GCP_CREDS" ]; then
+      echo "  ⚠ GCP credentials missing: $GCP_CREDS"
+    fi
+    ;;
+  test)
+    echo "Testing proxy with claude-sonnet-4-6..."
+    if ! curl -s -m 2 http://localhost:4100/ | grep -q vertex; then
+      echo "✗ Proxy is not running. Run: vertex-ctl start"
+      exit 1
+    fi
+    RESPONSE=$(curl -s -m 30 -X POST http://localhost:4100/v1/messages \
+      -H "Content-Type: application/json" \
+      -d '{"model":"claude-sonnet-4-6","max_tokens":50,"messages":[{"role":"user","content":"say hi"}]}')
+    if echo "$RESPONSE" | grep -q '"text"'; then
+      echo "✓ Proxy working! Response:"
+      echo "$RESPONSE" | jq -r '.content[0].text' 2>/dev/null || echo "$RESPONSE"
+    else
+      echo "✗ Proxy returned error:"
+      echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+      echo ""
+      echo "Common fixes:"
+      echo "  invalid_grant → GCP token expired. Run: gcloud auth application-default login"
+      echo "                  Then copy ~/.config/gcloud/application_default_credentials.json to $GCP_CREDS"
+      echo "                  Then: vertex-ctl start"
+    fi
     ;;
   model)
     if [ -z "$2" ]; then
@@ -91,13 +136,14 @@ case "$1" in
   *)
     echo "Vertex AI Proxy Controller"
     echo ""
-    echo "Usage: vertex-ctl {start|stop|status|model}"
+    echo "Usage: vertex-ctl {start|stop|status|model|test}"
     echo ""
     echo "  start          Start proxy, point OpenClaw to Vertex AI"
     echo "  stop           Stop proxy, revert to default provider"
     echo "  status         Show proxy status and current model"
     echo "  model          Show current model"
     echo "  model <name>   Switch model (e.g. claude-opus-4-6)"
+    echo "  test           Send a test message through the proxy"
     exit 1
     ;;
 esac
