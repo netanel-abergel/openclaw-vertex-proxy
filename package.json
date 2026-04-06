@@ -1,10 +1,10 @@
 {
   "name": "vertex-proxy",
   "version": "1.0.0",
-  "description": "Vertex AI proxy for OpenClaw — translates Anthropic API requests to GCP Vertex AI",
-  "main": "proxy.js",
+  "description": "Lightweight proxy that routes Anthropic API requests through Google Cloud Vertex AI — works with Claude Code, Cursor, and any Anthropic-compatible client",
+  "main": "src/proxy.js",
   "scripts": {
-    "start": "node proxy.js",
+    "start": "node src/proxy.js",
     "test": "curl -s -m 5 http://localhost:${PROXY_PORT:-4100}/health | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const j=JSON.parse(d);console.log(j.status==='ok'?'OK':'FAIL');process.exit(j.status==='ok'?0:1)\""
   },
   "keywords": [
@@ -12,12 +12,27 @@
     "anthropic",
     "claude",
     "proxy",
-    "openclaw",
-    "gcp"
+    "gcp",
+    "google-cloud",
+    "llm",
+    "ai-proxy",
+    "claude-code",
+    "cursor"
   ],
   "author": "Netanel Abergel",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/netanel-abergel/vertex-proxy.git"
+  },
+  "homepage": "https://github.com/netanel-abergel/vertex-proxy#readme",
+  "bugs": {
+    "url": "https://github.com/netanel-abergel/vertex-proxy/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "@anthropic-ai/vertex-sdk": "^1.0.0"
+    "@anthropic-ai/vertex-sdk": "^0.14.4"
   }
 }

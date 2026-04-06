@@ -1,194 +1,214 @@
-# Vertex AI Proxy for OpenClaw
+<p align="center">
+  <img src="https://img.shields.io/badge/Vertex_AI-Anthropic_Proxy-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Vertex AI Anthropic Proxy" />
+</p>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-green)](https://nodejs.org)
-[![GCP](https://img.shields.io/badge/GCP-Vertex%20AI-4285F4)](https://cloud.google.com/vertex-ai)
+<h1 align="center">vertex-proxy</h1>
 
-Translates Anthropic API requests to Google Cloud Vertex AI, allowing OpenClaw to use Claude models via your GCP project. The proxy passes through the model name from each request — no hardcoded model.
+<p align="center">
+  Route any Anthropic-compatible client through Google Cloud Vertex AI.<br/>
+  Drop-in proxy — zero client changes, just point <code>baseUrl</code> to localhost.
+</p>
 
-## Why a proxy?
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%E2%89%A518-green?style=flat-square" alt="Node.js 18+" /></a>
+  <a href="https://cloud.google.com/vertex-ai"><img src="https://img.shields.io/badge/GCP-Vertex%20AI-4285F4?style=flat-square" alt="Vertex AI" /></a>
+  <a href="Dockerfile"><img src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" /></a>
+</p>
 
-OpenClaw's built-in `anthropic-vertex` provider requires a different model naming scheme and auth flow. This proxy lets you keep using the standard `anthropic` provider — same model names, same API format — while routing through Vertex AI under the hood. No OpenClaw configuration changes beyond pointing `baseUrl` to localhost.
+---
 
-## Architecture
+## Why?
+
+Many tools speak the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) — Claude Code, Cursor, Continue, Cline, aider, and more. But if your organization routes AI through **Google Cloud Vertex AI** (for billing, compliance, or data residency), you need a translation layer.
+
+**vertex-proxy** sits between your client and Vertex AI:
 
 ```
-OpenClaw (anthropic provider, baseUrl → localhost:4100)
-  → http://localhost:4100 (Node.js proxy)
-    → @anthropic-ai/vertex-sdk
-      → Vertex AI (primary region)
-        → Claude model from request (e.g. claude-sonnet-4-6)
-      → Vertex AI (fallback region, on 5xx)
+┌─────────────────────────┐
+│  Any Anthropic Client   │  (Claude Code, Cursor, etc.)
+│  baseUrl → localhost     │
+└──────────┬──────────────┘
+           │  Standard Anthropic API
+           ▼
+┌─────────────────────────┐
+│    vertex-proxy :4100   │  Node.js  ·  ~140 lines
+└──────────┬──────────────┘
+           │  @anthropic-ai/vertex-sdk
+           ▼
+┌─────────────────────────┐
+│  Vertex AI (primary)    │──failover──▶ Vertex AI (fallback)
+│  e.g. us-east5          │             e.g. us-central1
+└─────────────────────────┘
 ```
 
-**Key concept:** OpenClaw uses the `anthropic` provider (NOT `anthropic-vertex`) with `baseUrl` pointed to the local proxy. The proxy translates the standard Anthropic API format to Vertex AI. The model name is taken from the request, not hardcoded.
-
-## Prerequisites
-
-1. **GCP ADC credentials** — generate with:
-   ```bash
-   gcloud auth application-default login --project devex-ai
-   ```
-   This creates `~/.config/gcloud/application_default_credentials.json`
-
-2. **Node.js** (v18+) installed on the Ocana machine
-
-## Setup
-
-```bash
-# On the Ocana machine (Linux or macOS):
-mkdir -p /opt/ocana/bifrost
-cp proxy.js run.sh package.json /opt/ocana/bifrost/
-cp vertex-ctl.sh /usr/local/bin/vertex-ctl
-chmod +x /opt/ocana/bifrost/run.sh /usr/local/bin/vertex-ctl
-cd /opt/ocana/bifrost && npm install
-
-# Copy GCP ADC credentials to the Ocana machine:
-cp ~/.config/gcloud/application_default_credentials.json /opt/ocana/openclaw/gcp-adc.json
-```
+**No code changes in your client.** Same model names, same API format — just swap `baseUrl`.
 
 ## Quick Start
 
 ```bash
-vertex-ctl start              # Start proxy + configure OpenClaw
-vertex-ctl test               # Verify it works end-to-end
-openclaw gateway restart       # Apply changes
+# 1. Clone & install
+git clone https://github.com/netanel-abergel/vertex-proxy.git
+cd vertex-proxy
+npm install
+
+# 2. Authenticate with GCP
+gcloud auth application-default login
+
+# 3. Start the proxy
+VERTEX_PROJECT_ID=my-project node src/proxy.js
 ```
 
-## Commands
+Then point your client's `baseUrl` to `http://localhost:4100` and set any dummy API key.
 
-| Command | What it does |
-|---------|-------------|
-| `vertex-ctl start` | Starts proxy, points OpenClaw anthropic provider to `localhost:4100` |
-| `vertex-ctl stop` | Stops proxy, reverts OpenClaw to `api.anthropic.com` |
-| `vertex-ctl status` | Shows proxy status, current model, region, active requests, uptime |
-| `vertex-ctl test` | Sends a test message through the proxy to verify it works |
-| `vertex-ctl model` | Shows current model and available options |
-| `vertex-ctl model <name>` | Switch model (e.g. `claude-sonnet-4-6`, `claude-opus-4-6`) |
+### Docker
 
-After `start`, `stop`, or `model`, restart the gateway:
 ```bash
-openclaw gateway restart
+docker build -t vertex-proxy .
+docker run -p 4100:4100 \
+  -e VERTEX_PROJECT_ID=my-project \
+  -v ~/.config/gcloud/application_default_credentials.json:/app/creds.json:ro \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/app/creds.json \
+  vertex-proxy
 ```
+
+## Client Examples
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+```bash
+# Set the base URL and a dummy API key
+export ANTHROPIC_BASE_URL=http://localhost:4100
+export ANTHROPIC_API_KEY=vertex-proxy
+
+claude
+```
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+In Cursor settings → Models → Anthropic:
+- **Base URL:** `http://localhost:4100`
+- **API Key:** `vertex-proxy` (any non-empty value)
+</details>
+
+<details>
+<summary><b>curl</b></summary>
+
+```bash
+curl -X POST http://localhost:4100/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 100,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+</details>
 
 ## Configuration
 
-All settings are configurable via environment variables:
+All settings via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VERTEX_PROJECT_ID` | `devex-ai` | GCP project ID |
 | `VERTEX_REGION` | `us-east5` | Primary Vertex AI region |
-| `VERTEX_FALLBACK_REGION` | `us-central1` | Fallback region (used on 5xx errors) |
-| `PROXY_PORT` | `4100` | Port the proxy listens on |
-| `VERTEX_MAX_CONCURRENT` | `20` | Max concurrent requests (returns 429 when exceeded) |
-| `VERTEX_DEBUG` | `0` | Set to `1` for verbose logging (request sizes, latency) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `/opt/ocana/openclaw/gcp-adc.json` | Path to GCP ADC credentials |
+| `VERTEX_FALLBACK_REGION` | `us-central1` | Fallback region (on 5xx errors) |
+| `PROXY_PORT` | `4100` | Proxy listening port |
+| `VERTEX_MAX_CONCURRENT` | `20` | Max concurrent requests (429 when exceeded) |
+| `VERTEX_DEBUG` | `0` | Set to `1` for verbose logging |
+| `GOOGLE_APPLICATION_CREDENTIALS` | GCP default | Path to service account or ADC credentials |
 
-Example:
+Copy `.env.example` to `.env` and customize:
+
 ```bash
-VERTEX_PROJECT_ID=my-project VERTEX_REGION=europe-west1 vertex-ctl start
+cp .env.example .env
 ```
 
-## How it works
-
-1. `vertex-ctl start` does three things:
-   - Starts the proxy on the configured port (via `run.sh`)
-   - Updates OpenClaw's `anthropic` provider `baseUrl` to `http://localhost:<port>`
-   - Sets `apiKey` to `vertex-proxy` (dummy value, proxy uses GCP ADC)
-
-2. OpenClaw sends requests to `http://localhost:<port>/v1/messages` using the `anthropic` provider
-3. The proxy forwards them to Vertex AI using the `@anthropic-ai/vertex-sdk`
-4. The model name is passed through from the request (e.g. `claude-sonnet-4-6`)
-5. If the primary region returns a 5xx error, the proxy automatically retries with the fallback region
-
-## Endpoints
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/messages` | POST | Proxied Anthropic Messages API |
-| `/health` | GET | Health check with project, region, active requests, uptime |
-| `/` | GET | Basic status check (backwards compatible) |
+| `/health` | GET | Health check (project, region, active requests, uptime) |
+| `/` | GET | Basic liveness check |
 
-## Files
+## Features
 
-- `proxy.js` — Node.js proxy server with region failover, concurrency cap, and graceful shutdown
-- `run.sh` — Auto-restart wrapper with crash guard and log rotation
-- `vertex-ctl.sh` — Management CLI (installed to `/usr/local/bin/vertex-ctl`)
-- `package.json` — Dependencies and metadata
+- **Region failover** — automatic retry on fallback region when primary returns 5xx
+- **Concurrency limiting** — returns `429` when max concurrent requests exceeded
+- **Streaming support** — full SSE streaming pass-through
+- **Request validation** — rejects malformed requests with descriptive 400 errors
+- **Graceful shutdown** — drains in-flight requests on SIGTERM/SIGINT
+- **Model pass-through** — uses whatever model the client requests, no hardcoding
+- **Tiny footprint** — single file, one dependency, ~140 lines
 
-## Reliability Features
+## Production Deployment
 
-- **Region failover** — If the primary region returns 5xx, automatically retries with the fallback region
-- **Concurrency cap** — Returns 429 when `VERTEX_MAX_CONCURRENT` is exceeded
-- **Crash guard** — `run.sh` stops after 5 rapid crashes within 60 seconds instead of looping forever
-- **Log rotation** — Rotates `proxy.log` when it exceeds 10 MB
-- **Graceful shutdown** — Drains in-flight requests on SIGTERM/SIGINT before exiting
-- **Request validation** — Rejects malformed requests (missing `model` or `messages`) with 400
+For production use, the repo includes helper scripts:
+
+| File | Purpose |
+|------|---------|
+| `src/proxy.js` | The proxy server |
+| `scripts/run.sh` | Auto-restart wrapper with crash guard (5 crashes/60s limit) and log rotation |
+| `scripts/vertex-ctl.sh` | Management CLI (`start`, `stop`, `status`, `test`, `model`) |
+| `Dockerfile` | Container deployment with health checks |
+
+### `run.sh` — Process Supervisor
+
+Wraps `proxy.js` with auto-restart, crash detection, and log rotation:
+
+```bash
+./scripts/run.sh  # auto-restarts on crash, rotates logs at 10MB
+```
+
+### `vertex-ctl.sh` — Management CLI
+
+> **Note:** `vertex-ctl.sh` was built for a specific deployment setup. You'll likely want to adapt the paths in the script to match your environment.
+
+```bash
+vertex-ctl start    # Start proxy
+vertex-ctl stop     # Stop proxy
+vertex-ctl status   # Show proxy status
+vertex-ctl test     # Send a test request
+```
 
 ## Troubleshooting
 
-### `invalid_grant` error in proxy.log
-The GCP refresh token has expired. Regenerate:
+<details>
+<summary><code>invalid_grant</code> error</summary>
+
+Your GCP credentials have expired. Regenerate:
+
 ```bash
-# On your local machine:
-gcloud auth application-default login --project devex-ai
-
-# Copy the new credentials to the Ocana machine:
-# (copy ~/.config/gcloud/application_default_credentials.json to /opt/ocana/openclaw/gcp-adc.json)
-
-# Then restart the proxy (kills old process, starts fresh with new creds):
-vertex-ctl start
+gcloud auth application-default login
 ```
-**Note:** ADC refresh tokens can expire. For production, use a GCP service account key instead.
 
-### `Unknown model: anthropic-vertex/...`
-The model prefix should be `anthropic/`, not `anthropic-vertex/`. The proxy handles the Vertex translation. Fix:
+For production, use a **service account key** instead of ADC user credentials.
+</details>
+
+<details>
+<summary>Proxy crashes in a loop</summary>
+
+`run.sh` stops automatically after 5 crashes within 60 seconds. Check `proxy.log` for the root cause before restarting.
+</details>
+
+<details>
+<summary>Port already in use</summary>
+
 ```bash
-openclaw models set "anthropic/claude-sonnet-4-6"
-openclaw gateway restart
+# Find and kill the process on port 4100
+lsof -ti :4100 | xargs kill
 ```
+</details>
 
-### Proxy fails to start on macOS
-The `run.sh` script auto-detects the OS. If `fuser` is unavailable, it falls back to `lsof`. If `nohup` fails with permission errors:
-```bash
-sudo chown -R $(whoami) /opt/ocana/bifrost
-```
+## Contributing
 
-### Config validation errors (`models: expected array`)
-The `jq` update wiped the models array. Fix:
-```bash
-openclaw doctor --fix
-vertex-ctl start
-openclaw gateway restart
-```
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### `vertex-ctl start` says "GCP credentials not found"
-Copy your credentials file:
-```bash
-cp ~/.config/gcloud/application_default_credentials.json /opt/ocana/openclaw/gcp-adc.json
-```
+## License
 
-### Proxy crashes in a loop
-If the proxy crashes 5 times within 60 seconds, `run.sh` will stop automatically and log:
-```
-FATAL: 5 crashes in 60s. Stopping. Check proxy.log for errors.
-```
-Check the log for the root cause before restarting.
-
-### How to verify the proxy works
-```bash
-vertex-ctl test
-```
-This sends a real request through the proxy to Vertex AI and shows the response.
-
-## Notes
-
-- Proxy auto-restarts on crash (3s delay via `run.sh`) with crash guard protection
-- `vertex-ctl start` kills any existing proxy before starting a new one
-- Add a crontab `@reboot` entry to auto-start on machine reboot:
-  ```
-  @reboot /opt/ocana/bifrost/run.sh >> /opt/ocana/bifrost/proxy.log 2>&1
-  ```
-- The proxy logs to `/opt/ocana/bifrost/proxy.log` (auto-rotated at 10 MB)
-- Set `VERTEX_DEBUG=1` for verbose logging including request sizes and latency
+[MIT](LICENSE) — Netanel Abergel

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify proxy starts
+        run: |
+          node src/proxy.js &
+          PID=$!
+          sleep 2
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4100/health)
+          kill $PID
+          if [ "$STATUS" = "200" ]; then
+            echo "✓ Proxy started and health check passed"
+          else
+            echo "✗ Health check returned $STATUS"
+            exit 1
+          fi
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t vertex-proxy .
+
+      - name: Verify Docker health
+        run: |
+          docker run -d --name test-proxy -p 4100:4100 vertex-proxy
+          sleep 3
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4100/health)
+          docker stop test-proxy
+          if [ "$STATUS" = "200" ]; then
+            echo "✓ Docker container healthy"
+          else
+            echo "✗ Docker health check returned $STATUS"
+            exit 1
+          fi

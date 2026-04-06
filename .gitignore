@@ -2,6 +2,23 @@ node_modules/
 proxy.log
 proxy.log.*
 *.json.bak
+
+# Credentials — never commit these
 application_default_credentials.json
 gcp-adc.json
+*.pem
+*.key
+
+# Environment
 .env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -7,7 +7,9 @@ MAX_CRASHES=5
 CRASH_WINDOW=60
 PORT="${PROXY_PORT:-4100}"
 MAX_LOG_SIZE=10485760  # 10 MB
-LOG_FILE="/opt/ocana/bifrost/proxy.log"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_FILE="${PROJECT_DIR}/proxy.log"
 
 kill_port() {
   if command -v fuser &>/dev/null; then
@@ -31,8 +33,8 @@ rotate_log() {
 kill_port
 sleep 1
 
-cd /opt/ocana/bifrost
-export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-/opt/ocana/openclaw/gcp-adc.json}"
+cd "$PROJECT_DIR"
+export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-}"
 
 crash_times=()
 
@@ -40,7 +42,7 @@ while true; do
   rotate_log
   kill_port
   sleep 1
-  node proxy.js
+  node src/proxy.js
   exit_code=$?
   now=$(date +%s)
 

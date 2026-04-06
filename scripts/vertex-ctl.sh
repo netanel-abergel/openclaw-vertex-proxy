@@ -67,7 +67,7 @@ case "$1" in
     kill_proxy
     sleep 1
 
-    nohup "$PROXY_DIR/run.sh" >> "$PROXY_DIR/proxy.log" 2>&1 &
+    nohup "$PROXY_DIR/scripts/run.sh" >> "$PROXY_DIR/proxy.log" 2>&1 &
     sleep 4
 
     if curl -s -m 3 "http://localhost:${PORT}/" | grep -q vertex; then
