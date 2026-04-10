@@ -2,18 +2,31 @@ process.on('uncaughtException', (err) => { console.error('UNCAUGHT:', err.messag
 process.on('unhandledRejection', (err) => { console.error('UNHANDLED:', err.message || err); });
 
 const http = require('http');
-const { AnthropicVertex } = require('@anthropic-ai/vertex-sdk');
 
-// Configuration via environment variables (with defaults)
-const PROJECT_ID = process.env.VERTEX_PROJECT_ID || 'devex-ai';
-const REGION = process.env.VERTEX_REGION || 'us-east5';
-const FALLBACK_REGION = process.env.VERTEX_FALLBACK_REGION || 'us-central1';
+// Backend selection: 'vertex' or 'bedrock'
+const BACKEND = (process.env.PROXY_BACKEND || 'vertex').toLowerCase();
+
+// Shared configuration
 const PORT = parseInt(process.env.PROXY_PORT, 10) || 4100;
 const MAX_CONCURRENT = parseInt(process.env.VERTEX_MAX_CONCURRENT, 10) || 20;
 const DEBUG = process.env.VERTEX_DEBUG === '1';
 
-const client = new AnthropicVertex({ projectId: PROJECT_ID, region: REGION });
-const fallbackClient = new AnthropicVertex({ projectId: PROJECT_ID, region: FALLBACK_REGION });
+let client, fallbackClient, REGION, FALLBACK_REGION, PROJECT_ID;
+
+if (BACKEND === 'bedrock') {
+  const { AnthropicBedrock } = require('@anthropic-ai/bedrock-sdk');
+  REGION = process.env.AWS_REGION || 'us-east-1';
+  FALLBACK_REGION = process.env.AWS_FALLBACK_REGION || 'us-west-2';
+  client = new AnthropicBedrock({ region: REGION });
+  fallbackClient = new AnthropicBedrock({ region: FALLBACK_REGION });
+} else {
+  const { AnthropicVertex } = require('@anthropic-ai/vertex-sdk');
+  PROJECT_ID = process.env.VERTEX_PROJECT_ID || 'devex-ai';
+  REGION = process.env.VERTEX_REGION || 'us-east5';
+  FALLBACK_REGION = process.env.VERTEX_FALLBACK_REGION || 'us-central1';
+  client = new AnthropicVertex({ projectId: PROJECT_ID, region: REGION });
+  fallbackClient = new AnthropicVertex({ projectId: PROJECT_ID, region: FALLBACK_REGION });
+}
 
 let activeRequests = 0;
 
@@ -65,16 +78,18 @@ const server = http.createServer(async (req, res) => {
     // Health check endpoint — verifies proxy is alive
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+      const health = {
         status: 'ok',
         proxy: 'vertex-ai-proxy',
-        project: PROJECT_ID,
+        backend: BACKEND,
         region: REGION,
         fallbackRegion: FALLBACK_REGION,
         activeRequests,
         maxConcurrent: MAX_CONCURRENT,
         uptime: Math.floor(process.uptime()),
-      }));
+      };
+      if (PROJECT_ID) health.project = PROJECT_ID;
+      res.end(JSON.stringify(health));
       return;
     }
 
@@ -134,4 +149,9 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-server.listen(PORT, () => log(`Vertex AI proxy on port ${PORT} (project: ${PROJECT_ID}, region: ${REGION})`));
+server.listen(PORT, () => {
+  const info = BACKEND === 'bedrock'
+    ? `backend: bedrock, region: ${REGION}`
+    : `backend: vertex, project: ${PROJECT_ID}, region: ${REGION}`;
+  log(`Proxy on port ${PORT} (${info})`);
+});

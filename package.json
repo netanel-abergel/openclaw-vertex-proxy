@@ -33,6 +33,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.28.1",
     "@anthropic-ai/vertex-sdk": "^0.14.4"
   }
 }

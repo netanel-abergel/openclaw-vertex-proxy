@@ -1,5 +1,5 @@
 #!/bin/bash
-# Vertex AI Proxy Controller for OpenClaw
+# Vertex AI / Bedrock Proxy Controller for OpenClaw
 # Usage: vertex-ctl {start|stop|status|model|test}
 
 # Auto-detect proxy dir: resolve symlink, then go up from scripts/
@@ -10,6 +10,7 @@ AUTH_PROFILES="/opt/ocana/openclaw/agents/main/agent/auth-profiles.json"
 SESSIONS="/opt/ocana/openclaw/agents/main/sessions/sessions.json"
 GCP_CREDS="/opt/ocana/openclaw/gcp-adc.json"
 PORT="${PROXY_PORT:-4100}"
+BACKEND="${PROXY_BACKEND:-vertex}"
 
 # Temp file management — use mktemp and clean up on exit
 TMPFILES=()
@@ -57,24 +58,33 @@ get_session_model() {
 
 case "$1" in
   start)
-    if [ ! -f "$GCP_CREDS" ]; then
-      echo "✗ GCP credentials not found at $GCP_CREDS"
-      echo "  Copy your application_default_credentials.json there first."
-      echo "  Generate with: gcloud auth application-default login"
-      exit 1
+    if [ "$BACKEND" = "bedrock" ]; then
+      # Bedrock uses AWS credential chain (env vars, instance profile, etc.)
+      if [ -z "$AWS_ACCESS_KEY_ID" ] && ! curl -s -m 1 http://169.254.169.254/latest/meta-data/iam/ &>/dev/null; then
+        echo "⚠ No AWS credentials found (no env vars, no instance profile)"
+        echo "  Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or run on an EC2 instance with an IAM role"
+      fi
+      echo "Starting Bedrock proxy..."
+    else
+      if [ ! -f "$GCP_CREDS" ]; then
+        echo "✗ GCP credentials not found at $GCP_CREDS"
+        echo "  Copy your application_default_credentials.json there first."
+        echo "  Generate with: gcloud auth application-default login"
+        exit 1
+      fi
+      echo "Starting Vertex AI proxy..."
     fi
 
-    echo "Starting Vertex AI proxy..."
     kill_proxy
     sleep 1
 
-    nohup "$PROXY_DIR/scripts/run.sh" >> "$PROXY_DIR/proxy.log" 2>&1 &
+    PROXY_BACKEND="$BACKEND" nohup "$PROXY_DIR/scripts/run.sh" >> "$PROXY_DIR/proxy.log" 2>&1 &
     sleep 4
 
     if curl -s -m 3 "http://localhost:${PORT}/" | grep -q vertex; then
       enable_proxy
-      echo "✓ Proxy running on port ${PORT}"
-      echo "✓ OpenClaw pointed to Vertex AI"
+      echo "✓ Proxy running on port ${PORT} (backend: ${BACKEND})"
+      echo "✓ OpenClaw pointed to proxy"
       echo "  Restart gateway to apply"
     else
       echo "✗ Proxy failed to start. Check $PROXY_DIR/proxy.log"
